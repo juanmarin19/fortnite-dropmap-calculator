@@ -101,6 +101,19 @@ export function simulateRoute(jump, landing, busStart, P = TITAN_LIKE) {
   };
 }
 
+/** Punto del segmento busA->busB más cercano al destino (proyección perpendicular, limitada al segmento). */
+export function nearestPointOnBus(busA, busB, target) {
+  const dx = busB[0] - busA[0];
+  const dy = busB[1] - busA[1];
+  const len2 = dx * dx + dy * dy;
+  let t = 0;
+  if (len2 > 0) {
+    t = ((target[0] - busA[0]) * dx + (target[1] - busA[1]) * dy) / len2;
+    t = Math.min(1, Math.max(0, t));
+  }
+  return { point: [busA[0] + dx * t, busA[1] + dy * t], t };
+}
+
 /** Top-N rutas sobre la recta del bus (como Titan: 400 muestras, ordenadas, separación mínima). */
 export function calculateTopRoutes(busA, busB, target, topN = 3, P = TITAN_LIKE) {
   const cands = [];

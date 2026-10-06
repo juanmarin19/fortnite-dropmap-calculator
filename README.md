@@ -5,7 +5,7 @@ Calculadora de drops estilo **titandropm.com/map/dropcalc** pero 100% open-sourc
 - Mapa con los **tiles de fortnite.gg**: `https://fortnite.gg/maps/{version}/{z}/{x}/{y}.webp`
   - Versión actual detectada: `42.30` (`window.Data.map`, `season: 42`)
   - CRS `L.CRS.Simple`, bounds `[[-256,0],[0,256]]`, centro `[-128,128]` — idéntico a `fortnite.gg/js/map.js`
-- Algoritmo propio en `src/dropcalc.js`: calcula **salto del bus, despliegue y corte del planeador** minimizando `tiempoBus + tiempoAire` (400 candidatos, top-3 con separación ≥ 0.03).
+- Algoritmo propio en `src/dropcalc.js`: salto del bus **en el punto más cercano al destino** (proyección perpendicular sobre el segmento entrada→salida), despliegue y corte del planeador con el reparto 58/28/8/6.
 
 ## Uso
 ```bash
@@ -17,8 +17,8 @@ npm run dev
 3. Te marca 🔵 salto, 🪂 despliegue, ✂️ corte, badge **Re-Open** + rutas alternativas (amarilla/gris).
 4. Clics posteriores se ignoran (como en Titan); usá **Clear Bus** para re-marcar el bus o **Clear All** para empezar de cero.
 
-## Física (validada contra Titan Dropcalc)
-Ver `src/dropcalc.js` (`TITAN_LIKE`):
+## Física (reparto de segmentos estilo Titan)
+Ver `src/dropcalc.js` (`TITAN_LIKE`). Los tiempos por segmento y el badge siguen la física de Titan; el punto de salto es el más cercano al destino (decisión de diseño para competitivo, v0.5):
 
 | Concepto | Valor |
 |---|---|
@@ -30,16 +30,8 @@ Ver `src/dropcalc.js` (`TITAN_LIKE`):
 | Reparto (drop largo) | 58% freefall / 28% glide / 8% cut-fall / 6% glide final |
 | Badge Re-Open | `round(t_bus + t_freefall + t_glide1)` |
 
-### Validación (2026-10)
-Se reprodujeron 3 escenarios en `titandropm.com/map/dropcalc` con posiciones normalizadas equivalentes:
-
-| Escenario | Titan | Nuestro |
-|---|---|---|
-| bus cruzando el centro | 285s | 285s |
-| diagonal larga | 217s | 218s |
-| bus horizontal | 369s | 368s |
-
-Diferencia ≤ 1s (redondeo del badge) y posiciones de salto/despliegue/corte a ±1px. El encuadre de la grilla de fortnite.gg coincide con el de Titan (misma escala y origen).
+### Nota (v0.5)
+El minimizador de `tiempoBus + tiempoAire` de Titan (400 candidatos, top-3) marcaba el salto demasiado tarde para competitivo, así que se reemplazó por el punto más cercano al destino. Los segmentos (58/28/8/6, caída directa ≤100, badge) no cambiaron.
 
 ## Tiles y legalidad
 - Los tiles se cargan por hotlink a `fortnite.gg` (© Epic / fortnite.gg). No los redistribuimos.

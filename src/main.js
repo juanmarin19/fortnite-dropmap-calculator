@@ -1,7 +1,7 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import './style.css';
-import { calculateTopRoutes } from './dropcalc.js';
+import { simulateRoute, nearestPointOnBus } from './dropcalc.js';
 import { COLORS } from './pois.js';
 
 const $ = (id) => document.getElementById(id);
@@ -155,36 +155,6 @@ function busEndpoint(latlng, start) {
   layers.push(m);
 }
 
-// Rutas 2 y 3 se dibujan con un "bulge" sinusoidal (amplitud 5% de la longitud del tramo).
-function bulgePath(from, to, sign) {
-  const d0 = to[0] - from[0], d1 = to[1] - from[1];
-  const len = Math.hypot(d0, d1);
-  if (!sign || len < 1e-9) return [from, to];
-  const n = Math.max(20, Math.floor(len / 120));
-  const px = -d1 / len, py = d0 / len;
-  const pts = [];
-  for (let i = 0; i < n; i++) {
-    const t = i / (n - 1);
-    const a = sign * 0.05 * len * Math.sin(Math.PI * t);
-    pts.push([from[0] + d0 * t + px * a, from[1] + d1 * t + py * a]);
-  }
-  return pts;
-}
-
-// ---------- Flujo de clics (idéntico al de Titan) ----------
-// sin destino → destino · destino sin bus → entrada · entrada sin salida → salida · completo → se ignora
-map.on('click', (e) => {
-  const p = [e.latlng.lat, e.latlng.lng];
-  if (!landing) landing = p;
-  else if (!busA) busA = p;
-  else if (!busB) busB = p;
-  else return;
-  redraw(); save();
-});
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') $('clearBus').click();
-});
-
 // ---------- Dibujo ----------
 function clearLayers() { layers.forEach((l) => map.removeLayer(l)); layers = []; }
 
@@ -199,29 +169,43 @@ function redraw() {
   }
   if (!(landing && busA && busB)) return;
 
-  calculateTopRoutes(busA, busB, landing, 3).forEach((r, idx) => {
-    const sel = idx === 0;
-    const col = ROUTE_COLORS[idx] || ROUTE_COLORS[2];
-    const bend = idx === 1 ? -1 : idx === 2 ? 1 : 0;
-    r.segments.forEach((s) => {
-      const isFinal = s.type === 'glide' && s.to === r.landingPoint;
-      let weight, opacity, dash;
-      if (isFinal) { weight = sel ? 2 : 1.5; opacity = sel ? 0.7 : 0.45; dash = '6,5'; }
-      else if (s.type === 'cut-fall') { weight = sel ? 2.5 : 2; opacity = sel ? 0.9 : 0.55; dash = undefined; }
-      else { weight = sel ? 3 : 2.2; opacity = sel ? 0.9 : 0.55; dash = '10,8'; }
-      layers.push(L.polyline(bulgePath(s.from, s.to, bend), {
-        color: isFinal ? '#94a3b8' : col, weight, opacity, dashArray: dash,
-      }).addTo(map));
-    });
-    jumpDot(r.jumpPoint, idx);
-    if (r.deployPoint) eventMarker(r.deployPoint, 'deploy', sel, sel ? 1250 : 1050);
-    if (r.cutPoint) eventMarker(r.cutPoint, 'cut', sel, sel ? 1100 : 1050);
-    if (sel && r.reopenPoint) {
-      const g = r.segments.find((x) => x.type === 'glide' && x.to !== r.landingPoint);
-      reopenMarker(r.reopenPoint, Math.round(r.tBus + r.tFreefall + (g ? g.time : 0)));
-    }
+  // El salto es el punto del bus más cercano al destino.
+  const { point: J } = nearestPointOnBus(busA, busB, landing);
+  const r = simulateRoute(J, landing, busA);
+  if (!r) return;
+  const col = ROUTE_COLORS[0];
+  r.segments.forEach((s) => {
+    const isFinal = s.type === 'glide' && s.to === r.landingPoint;
+    let weight, opacity, dash;
+    if (isFinal) { weight = 2; opacity = 0.7; dash = '6,5'; }
+    else if (s.type === 'cut-fall') { weight = 2.5; opacity = 0.9; dash = undefined; }
+    else { weight = 3; opacity = 0.9; dash = '10,8'; }
+    layers.push(L.polyline([s.from, s.to], {
+      color: isFinal ? '#94a3b8' : col, weight, opacity, dashArray: dash,
+    }).addTo(map));
   });
+  jumpDot(r.jumpPoint, 0);
+  if (r.deployPoint) eventMarker(r.deployPoint, 'deploy', true, 1250);
+  if (r.cutPoint) eventMarker(r.cutPoint, 'cut', true, 1100);
+  if (r.reopenPoint) {
+    const g = r.segments.find((x) => x.type === 'glide' && x.to !== r.landingPoint);
+    reopenMarker(r.reopenPoint, Math.round(r.tBus + r.tFreefall + (g ? g.time : 0)));
+  }
 }
+
+// ---------- Flujo de clics ----------
+// sin destino → destino · destino sin bus → entrada · entrada sin salida → salida · completo → se ignora
+map.on('click', (e) => {
+  const p = [e.latlng.lat, e.latlng.lng];
+  if (!landing) landing = p;
+  else if (!busA) busA = p;
+  else if (!busB) busB = p;
+  else return;
+  redraw(); save();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') $('clearBus').click();
+});
 
 // init
 if (load()) redraw();
