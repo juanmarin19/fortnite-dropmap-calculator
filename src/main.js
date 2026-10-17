@@ -1,7 +1,7 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import './style.css';
-import { simulateRoute, nearestPointOnBus, optimalJumpOnBus } from './dropcalc.js';
+import { simulateRoute, nearestPointOnBus, optimalJumpOnBus, calculateTopRoutes } from './dropcalc.js';
 import { COLORS } from './pois.js';
 
 const $ = (id) => document.getElementById(id);
@@ -186,29 +186,38 @@ function redraw() {
   }
   if (!(landing && busA && busB)) return;
 
-  // Punto de salto: criterio elegido arriba (JUMP_MODE).
-  const J = (JUMP_MODE === 'nearest'
-    ? nearestPointOnBus(busA, busB, landing)
-    : optimalJumpOnBus(busA, busB, landing)).point;
-  const r = simulateRoute(J, landing, busA);
-  if (!r) return;
-  const col = ROUTE_COLORS[0];
-  r.segments.forEach((s) => {
-    const isFinal = s.type === 'glide' && s.to === r.landingPoint;
-    let weight, opacity, dash;
-    if (isFinal) { weight = 2; opacity = 0.7; dash = '6,5'; }
-    else if (s.type === 'cut-fall') { weight = 2.5; opacity = 0.9; dash = undefined; }
-    else { weight = 3; opacity = 0.9; dash = '10,8'; }
-    layers.push(L.polyline([s.from, s.to], {
-      color: isFinal ? '#94a3b8' : col, weight, opacity, dashArray: dash,
-    }).addTo(map));
+  // Las 3 rutas candidatas, igual que el original: la 0 es la que llega antes.
+  // El punto de salto de la principal se afina según JUMP_MODE; las otras dos salen
+  // del propio barrido de 400 candidatos.
+  const barrido = calculateTopRoutes(busA, busB, landing, 3);
+  if (!barrido.length) return;
+  const saltoPrincipal = JUMP_MODE === 'nearest'
+    ? nearestPointOnBus(busA, busB, landing).point
+    : optimalJumpOnBus(busA, busB, landing).point;
+  const refinada = simulateRoute(saltoPrincipal, landing, busA);
+  const rutas = refinada ? [refinada].concat(barrido.slice(1)) : barrido;
+
+  rutas.forEach((r, k) => {
+    const principal = k === 0;
+    const col = ROUTE_COLORS[k] || ROUTE_COLORS[2];
+    r.segments.forEach((s) => {
+      const isFinal = s.type === 'glide' && s.to === r.landingPoint;
+      let weight, opacity, dash;
+      if (isFinal) { weight = principal ? 2 : 1.5; opacity = principal ? 0.7 : 0.5; dash = '6,5'; }
+      else if (s.type === 'cut-fall') { weight = principal ? 2.5 : 2; opacity = principal ? 0.9 : 0.55; dash = undefined; }
+      else { weight = principal ? 3 : 2.2; opacity = principal ? 0.9 : 0.55; dash = '10,8'; }
+      layers.push(L.polyline([s.from, s.to], {
+        color: isFinal ? '#94a3b8' : col, weight, opacity, dashArray: dash,
+      }).addTo(map));
+    });
+    jumpDot(r.jumpPoint, k);
+    if (r.deployPoint) eventMarker(r.deployPoint, 'deploy', principal, principal ? 1250 : 1000);
+    if (r.cutPoint) eventMarker(r.cutPoint, 'cut', principal, principal ? 1100 : 1000);
+    // El rótulo de reapertura va sólo en la ruta principal, como el original.
+    if (r.reopenPoint && principal) {
+      reopenMarker(r.reopenPoint, BADGE_MODE === 'titan' ? r.badgeTitanSeconds : Math.round(r.reopenSeconds));
+    }
   });
-  jumpDot(r.jumpPoint, 0);
-  if (r.deployPoint) eventMarker(r.deployPoint, 'deploy', true, 1250);
-  if (r.cutPoint) eventMarker(r.cutPoint, 'cut', true, 1100);
-  if (r.reopenPoint) {
-    reopenMarker(r.reopenPoint, BADGE_MODE === 'titan' ? r.badgeTitanSeconds : Math.round(r.reopenSeconds));
-  }
 }
 
 // ---------- Flujo de clics ----------
