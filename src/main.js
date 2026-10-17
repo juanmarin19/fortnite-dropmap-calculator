@@ -1,10 +1,26 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import './style.css';
-import { simulateRoute, nearestPointOnBus } from './dropcalc.js';
+import { simulateRoute, nearestPointOnBus, optimalJumpOnBus } from './dropcalc.js';
 import { COLORS } from './pois.js';
 
 const $ = (id) => document.getElementById(id);
+
+/* ---------- Criterios ajustables ----------
+ * JUMP_MODE:
+ *   'optimal' → salta donde se minimiza tiempoBus + tiempoAire (el argmin de Titan,
+ *               resuelto con refinado continuo). Es el criterio que hace llegar antes.
+ *   'nearest' → punto del bus más cercano al destino (v0.5). Medido: cuesta +7,3 s de
+ *               mediana y hasta +97,7 s, porque el punto de máxima cercanía son 90°
+ *               y el óptimo son ~54,9° (ver tools/precision.mjs).
+ * BADGE_MODE:
+ *   'reopen' → instante real en que se llega al punto de reapertura.
+ *   'titan'  → round(tBus + tFreefall + tGlide1): la fórmula original apunta al instante del
+ *              CORTE, no al de la reapertura (que es donde se dibuja el marcador), así que el
+ *              rótulo se queda corta en tC: 12,8 s en el caso de referencia (199 s en vez de 212).
+ */
+const JUMP_MODE = 'optimal';
+const BADGE_MODE = 'reopen';
 
 // ---------- Mapa (mismo encuadre por defecto que Titan: grilla 256u centrada) ----------
 const map = L.map('map', {
@@ -12,8 +28,9 @@ const map = L.map('map', {
   minZoom: 0, maxZoom: 7, zoomSnap: 0.5, zoomControl: false,
   attributionControl: false,
 });
+// La pirámide de fortnite.gg va de z=3 a z=8 (maxNativeZoom 5 desperdiciaba los zooms 6-7).
 L.tileLayer('https://fortnite.gg/maps/42.30/{z}/{x}/{y}.webp', {
-  noWrap: true, bounds: [[-256, 0], [0, 256]], minNativeZoom: 3, maxNativeZoom: 5, maxZoom: 7,
+  noWrap: true, bounds: [[-256, 0], [0, 256]], minNativeZoom: 3, maxNativeZoom: 8, maxZoom: 7,
 }).addTo(map);
 
 function fitIsland() {
@@ -169,8 +186,10 @@ function redraw() {
   }
   if (!(landing && busA && busB)) return;
 
-  // El salto es el punto del bus más cercano al destino.
-  const { point: J } = nearestPointOnBus(busA, busB, landing);
+  // Punto de salto: criterio elegido arriba (JUMP_MODE).
+  const J = (JUMP_MODE === 'nearest'
+    ? nearestPointOnBus(busA, busB, landing)
+    : optimalJumpOnBus(busA, busB, landing)).point;
   const r = simulateRoute(J, landing, busA);
   if (!r) return;
   const col = ROUTE_COLORS[0];
@@ -188,8 +207,7 @@ function redraw() {
   if (r.deployPoint) eventMarker(r.deployPoint, 'deploy', true, 1250);
   if (r.cutPoint) eventMarker(r.cutPoint, 'cut', true, 1100);
   if (r.reopenPoint) {
-    const g = r.segments.find((x) => x.type === 'glide' && x.to !== r.landingPoint);
-    reopenMarker(r.reopenPoint, Math.round(r.tBus + r.tFreefall + (g ? g.time : 0)));
+    reopenMarker(r.reopenPoint, BADGE_MODE === 'titan' ? r.badgeTitanSeconds : Math.round(r.reopenSeconds));
   }
 }
 

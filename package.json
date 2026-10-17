@@ -1,13 +1,14 @@
 {
   "name": "fortnite-dropmap-calculator",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Open-source Fortnite Dropmap Calculator — Leaflet + fortnite.gg tiles. Calcula salto del bus, despliegue y corte de planeador.",
   "type": "module",
   "license": "MIT",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "precision": "node tools/precision.mjs"
   },
   "dependencies": {
     "leaflet": "^1.9.4"

@@ -26,6 +26,20 @@ export const TITAN_LIKE = {
 export const GAME_PER_MAP = 2600960 / 256; // 10160
 const toTitan = (mapUnits) => (mapUnits * GAME_PER_MAP) / TITAN_LIKE.scale;
 
+// Velocidad efectiva del aire (media armónica ponderada del reparto) = 42,11 uTitan/s.
+export const AIR_EFF = 1 / (
+  TITAN_LIKE.split[0] / TITAN_LIKE.freefall +
+  TITAN_LIKE.split[1] / TITAN_LIKE.glide +
+  TITAN_LIKE.split[2] / TITAN_LIKE.freefall +
+  TITAN_LIKE.split[3] / TITAN_LIKE.glide
+);
+
+/* Regla del salto óptimo: el mínimo de tiempoBus + tiempoAire está donde el destino queda a
+ * acos(vAire / vBus) ≈ 54,9° del rumbo del bus, NO en el punto de máxima cercanía (90°).
+ * Como el bus (73,3) es más rápido que el aire (42,11), el punto de más cercanía siempre
+ * salta tarde y cuesta tiempo. Medido en tools/precision.mjs. */
+export const OPTIMAL_ANGLE_DEG = (Math.acos(AIR_EFF / TITAN_LIKE.bus) * 180) / Math.PI;
+
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
 const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
@@ -53,24 +67,29 @@ export function simulateRoute(jump, landing, busStart, P = TITAN_LIKE) {
   let deploy = null;
   let cut = null;
   let reopen = null;
+  // tiempos por fase, para poder exponer el instante real de reapertura
+  let tF = 0;
+  let tG1 = 0;
+  let tC = 0;
 
   if (dTitan <= P.closeThreshold) {
     const t = dTitan / P.freefall;
     total += t;
+    tF = t;
     segments.push({ type: 'freefall', from: jump, to: landing, time: t });
   } else {
     const [f, g1, c, g2] = P.split.map((s) => s * dTitan);
-    const tF = f / P.freefall;
+    tF = f / P.freefall;
     total += tF;
     deploy = advance(jump, dir, f);
     segments.push({ type: 'freefall', from: jump, to: deploy, time: tF });
 
-    const tG1 = g1 / P.glide;
+    tG1 = g1 / P.glide;
     total += tG1;
     cut = advance(deploy, dir, g1);
     segments.push({ type: 'glide', from: deploy, to: cut, time: tG1 });
 
-    const tC = c / P.freefall;
+    tC = c / P.freefall;
     total += tC;
     reopen = advance(cut, dir, c);
     segments.push({ type: 'cut-fall', from: cut, to: reopen, time: tC });
@@ -98,6 +117,14 @@ export function simulateRoute(jump, landing, busStart, P = TITAN_LIKE) {
     byType,
     segments,
     distanceMap: dMap,
+    // Instante real en que se llega a reopenPoint (fin de la caída tras el corte).
+    reopenSeconds: reopen ? tBus + tF + tG1 + tC : null,
+    // Fórmula del rótulo de Titan: tBus + tFreefall + tGlide1. Apunta al instante del CORTE
+    // (cuando empieza la caída), no al de la reapertura, que es donde Titan dibuja el marcador.
+    // Se queda corta exactamente en tC, la duración de la caída del corte: 12,81 s en el caso
+    // de referencia (rótulo 199 s para un punto que se alcanza a los 212,19 s).
+    // Se expone para poder comparar, pero la UI usa reopenSeconds (ver main.js, BADGE_MODE).
+    badgeTitanSeconds: reopen ? Math.round(tBus + tF + tG1) : null,
   };
 }
 
@@ -112,6 +139,42 @@ export function nearestPointOnBus(busA, busB, target) {
     t = Math.min(1, Math.max(0, t));
   }
   return { point: [busA[0] + dx * t, busA[1] + dy * t], t };
+}
+
+/** Ángulo (grados) entre el rumbo del bus y la dirección salto->destino.
+ *  El mínimo de tiempo está cerca de OPTIMAL_ANGLE_DEG (≈54,9°); el punto de máxima
+ *  cercanía son 90°. Sirve para diagnosticar por qué un salto no es el óptimo. */
+export function angleToTarget(busA, busB, jump, target) {
+  const h = norm(sub(busB, busA));
+  const d = norm(sub(target, jump));
+  const c = Math.max(-1, Math.min(1, h[0] * d[0] + h[1] * d[1]));
+  return (Math.acos(c) * 180) / Math.PI;
+}
+
+/** Punto del bus que MINIMIZA tiempoBus + tiempoAire (el criterio de Titan), resuelto con
+ *  precisión sub-unidad: barrido de 400 muestras + refinado ternario continuo en el bracket.
+ *  El barrido solo ya da el óptimo con error ~0 (la curva es muy plana), pero el refinado
+ *  deja el punto exacto (ver tools/precision.mjs). */
+export function optimalJumpOnBus(busA, busB, target, P = TITAN_LIKE) {
+  const at = (t) => add(busA, mul(sub(busB, busA), t));
+  const time = (t) => simulateRoute(at(t), target, busA, P)?.totalTime ?? Infinity;
+  const S = 400;
+  let bt = 0;
+  let best = Infinity;
+  for (let k = 0; k < S; k++) {
+    const t = k / (S - 1);
+    const v = time(t);
+    if (v < best) { best = v; bt = t; }
+  }
+  let lo = Math.max(0, bt - 1 / (S - 1));
+  let hi = Math.min(1, bt + 1 / (S - 1));
+  for (let k = 0; k < 120; k++) {
+    const m1 = lo + (hi - lo) / 3;
+    const m2 = hi - (hi - lo) / 3;
+    if (time(m1) <= time(m2)) hi = m2; else lo = m1;
+  }
+  const t = (lo + hi) / 2;
+  return { point: at(t), t, totalTime: time(t) };
 }
 
 /** Top-N rutas sobre la recta del bus (como Titan: 400 muestras, ordenadas, separación mínima). */
